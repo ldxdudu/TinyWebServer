@@ -2,7 +2,7 @@
 
 Config::Config(){
     //端口号,默认9006
-    PORT = 9006;
+    PORT = 8000;
 
     //日志写入方式，默认同步
     LOGWrite = 0;
@@ -35,7 +35,7 @@ Config::Config(){
 void Config::parse_arg(int argc, char*argv[]){
     int opt;
     const char *str = "p:l:m:o:s:t:c:a:";
-    while ((opt = getopt(argc, argv, str)) != -1)
+    while ((opt = getopt(argc, argv, str)) != -1) // getopt函数是命令行参数解析函数
     {
         switch (opt)
         {

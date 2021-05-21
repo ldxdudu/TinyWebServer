@@ -77,9 +77,9 @@ void WebServer::log_write()
     if (0 == m_close_log)
     {
         //初始化日志
-        if (1 == m_log_write)
+        if (1 == m_log_write)   //日志写入方式，默认同步 
             Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 800);
-        else
+        else // m_log_write == 0为同步写入
             Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 0);
     }
 }
@@ -107,10 +107,10 @@ void WebServer::eventListen()
     assert(m_listenfd >= 0);
 
     //优雅关闭连接
-    if (0 == m_OPT_LINGER)
+    if (0 == m_OPT_LINGER) // 0，不使用优雅关闭连接, 默认为不使用
     {
-        struct linger tmp = {0, 1};
-        setsockopt(m_listenfd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
+        struct linger tmp = {0, 1}; // linger结构体用于操作SO_LINGER选项，此选项指定函数close对面向连接的协议如何操作（如TCP）。内核缺省close操作是立即返回，如果有数据残留在套接口缓冲区中则系统将试着将这些数据发送给对方
+        setsockopt(m_listenfd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp)); // SO_LINGER 确保数据安全且可靠的传送出去
     }
     else if (1 == m_OPT_LINGER)
     {
@@ -126,36 +126,36 @@ void WebServer::eventListen()
     address.sin_port = htons(m_port);
 
     int flag = 1;
-    setsockopt(m_listenfd, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+    setsockopt(m_listenfd, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)); // 设置端口复用
     ret = bind(m_listenfd, (struct sockaddr *)&address, sizeof(address));
     assert(ret >= 0);
     ret = listen(m_listenfd, 5);
     assert(ret >= 0);
 
-    utils.init(TIMESLOT);
+    utils.init(TIMESLOT); // 定时器初始化
 
     //epoll创建内核事件表
-    epoll_event events[MAX_EVENT_NUMBER];
-    m_epollfd = epoll_create(5);
+    epoll_event events[MAX_EVENT_NUMBER]; // epoll事件的返回数组
+    m_epollfd = epoll_create(5); // 创建epoll句柄, 内核监听的文件描述符的个数为5
     assert(m_epollfd != -1);
 
-    utils.addfd(m_epollfd, m_listenfd, false, m_LISTENTrigmode);
+    utils.addfd(m_epollfd, m_listenfd, false, m_LISTENTrigmode); // 将m_listenfd监听套接字写入到epoll中
     http_conn::m_epollfd = m_epollfd;
 
-    ret = socketpair(PF_UNIX, SOCK_STREAM, 0, m_pipefd);
+    ret = socketpair(PF_UNIX, SOCK_STREAM, 0, m_pipefd); // 创建定时器说需要的管道
     assert(ret != -1);
-    utils.setnonblocking(m_pipefd[1]);
+    utils.setnonblocking(m_pipefd[1]); // 将读管道设置为非阻塞的
     utils.addfd(m_epollfd, m_pipefd[0], false, 0);
 
     utils.addsig(SIGPIPE, SIG_IGN);
     utils.addsig(SIGALRM, utils.sig_handler, false);
     utils.addsig(SIGTERM, utils.sig_handler, false);
 
-    alarm(TIMESLOT);
+    alarm(TIMESLOT); 
 
     //工具类,信号和描述符基础操作
-    Utils::u_pipefd = m_pipefd;
-    Utils::u_epollfd = m_epollfd;
+    Utils::u_pipefd = m_pipefd; // 静态成员变量类外实现
+    Utils::u_epollfd = m_epollfd; // 静态成员变量类外实现
 }
 
 void WebServer::timer(int connfd, struct sockaddr_in client_address)
@@ -201,7 +201,7 @@ bool WebServer::dealclinetdata()
 {
     struct sockaddr_in client_address;
     socklen_t client_addrlength = sizeof(client_address);
-    if (0 == m_LISTENTrigmode)
+    if (0 == m_LISTENTrigmode) // 0 == m_LISTENTrigmode LT模式
     {
         int connfd = accept(m_listenfd, (struct sockaddr *)&client_address, &client_addrlength);
         if (connfd < 0)
@@ -218,7 +218,7 @@ bool WebServer::dealclinetdata()
         timer(connfd, client_address);
     }
 
-    else
+    else // 0 == m_LISTENTrigmode ET模式
     {
         while (1)
         {
@@ -280,7 +280,10 @@ bool WebServer::dealwithsignal(bool &timeout, bool &stop_server)
 void WebServer::dealwithread(int sockfd)
 {
     util_timer *timer = users_timer[sockfd].timer;
-
+    /*
+     * reactor模式中，主线程(I/O处理单元)只负责监听文件描述符上是否有事件发生，有的话立即通知工作线程(逻辑单元 )，读写数据、接受新连接及处理客户请求均在工作线程中完成。通常由同步I/O实现。
+     * proactor模式中，主线程和内核负责处理读写数据、接受新连接等I/O操作，工作线程仅负责业务逻辑，如处理客户请求。通常由异步I/O实现。
+    */
     //reactor
     if (1 == m_actormodel)
     {
@@ -289,8 +292,8 @@ void WebServer::dealwithread(int sockfd)
             adjust_timer(timer);
         }
 
-        //若监测到读事件，将该事件放入请求队列
-        m_pool->append(users + sockfd, 0);
+        //若监测到读事件，将该事件放入请求队列, 因为只进行监听将read_once()函数放入到了线程处理函数中
+        m_pool->append(users + sockfd, 0);  // 等待有空闲的工作线程进行处理
 
         while (true)
         {
@@ -308,13 +311,13 @@ void WebServer::dealwithread(int sockfd)
     }
     else
     {
-        //proactor
-        if (users[sockfd].read_once())
+        //proactor中， 主线程和内核负责处理读写数据所以read_once()函数在主线程中进行，再完成读之后再交给工作线程
+        if (users[sockfd].read_once()) // 由于异步I/O并不成熟，实际中使用较少，这里将使用同步I/O模拟实现proactor模式。
         {
             LOG_INFO("deal with the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
 
             //若监测到读事件，将该事件放入请求队列
-            m_pool->append_p(users + sockfd);
+            m_pool->append_p(users + sockfd); // 等待有空闲的工作线程进行处理
 
             if (timer)
             {
@@ -376,12 +379,12 @@ void WebServer::dealwithwrite(int sockfd)
 
 void WebServer::eventLoop()
 {
-    bool timeout = false;
-    bool stop_server = false;
+    bool timeout = false; // 如果有客户端长时间未通信，触发SIGALRM超时信号，timeout变为true, 
+    bool stop_server = false; // 如果检测到ctr + c，触发SIGTERM信号，stop_server变为true, 结束整个服务器
 
     while (!stop_server)
     {
-        int number = epoll_wait(m_epollfd, events, MAX_EVENT_NUMBER, -1);
+        int number = epoll_wait(m_epollfd, events, MAX_EVENT_NUMBER, -1); //epoll阻塞等待socked或定时器事件触发
         if (number < 0 && errno != EINTR)
         {
             LOG_ERROR("%s", "epoll failure");
@@ -422,7 +425,7 @@ void WebServer::eventLoop()
                 dealwithwrite(sockfd);
             }
         }
-        if (timeout)
+        if (timeout) // 如果有客户端长时间未通信，触发超时，重新定时以不断触发SIGALRM信号
         {
             utils.timer_handler();
 
